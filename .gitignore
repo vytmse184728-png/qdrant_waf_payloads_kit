@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+
+data/
+exported_snapshots/
+state/
+
+*.snapshot
+.env
+.DS_Store
