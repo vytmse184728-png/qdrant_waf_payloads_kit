@@ -18,7 +18,6 @@ from typing import Iterable, Iterator
 import requests
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from sentence_transformers import SentenceTransformer
 
 TEXT_EXTENSIONS = {
     ".txt",
@@ -337,22 +336,37 @@ def create_collection_snapshot(qdrant_url: str, collection_name: str) -> str:
     return data["result"]["name"]
 
 
-def ensure_collection(client: QdrantClient, collection_name: str, vector_size: int) -> None:
-    if not client.collection_exists(collection_name):
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
-            on_disk_payload=True,
-        )
-        for field_name in ["category", "source", "source_path"]:
-            try:
-                client.create_payload_index(
-                    collection_name=collection_name,
-                    field_name=field_name,
-                    field_schema=models.KeywordIndexParams(type="keyword", on_disk=True),
-                )
-            except Exception:
-                pass
+def ensure_collection(
+    client: QdrantClient,
+    collection_name: str,
+    dense_model_name: str,
+) -> None:
+    if client.collection_exists(collection_name):
+        return
+
+    client.create_collection(
+        collection_name=collection_name,
+        vectors_config={
+            "dense": models.VectorParams(
+                size=client.get_embedding_size(dense_model_name),
+                distance=models.Distance.COSINE,
+            )
+        },
+        sparse_vectors_config={
+            "sparse": models.SparseVectorParams()
+        },
+        on_disk_payload=True,
+    )
+
+    for field_name in ["category", "source", "source_path"]:
+        try:
+            client.create_payload_index(
+                collection_name=collection_name,
+                field_name=field_name,
+                field_schema=models.KeywordIndexParams(type="keyword", on_disk=True),
+            )
+        except Exception:
+            pass
 
 
 def count_points(client: QdrantClient, collection_name: str) -> int:
@@ -368,24 +382,28 @@ def chunked(items: list[PayloadRecord], size: int) -> Iterator[list[PayloadRecor
         yield items[idx : idx + size]
 
 
-def embed_records(model: SentenceTransformer, records: list[PayloadRecord]) -> list[list[float]]:
-    texts = [record.text for record in records]
-    embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-    return [list(map(float, vector)) for vector in embeddings]
-
-
-def upsert_records(
+def upsert_records_fastembed(
     client: QdrantClient,
     collection_name: str,
     records: list[PayloadRecord],
-    embeddings: list[list[float]],
+    dense_model_name: str,
+    sparse_model_name: str,
 ) -> None:
     points = []
-    for record, vector in zip(records, embeddings):
+    for record in records:
         points.append(
             models.PointStruct(
                 id=record.point_id,
-                vector=vector,
+                vector={
+                    "dense": models.Document(
+                        text=record.text,
+                        model=dense_model_name,
+                    ),
+                    "sparse": models.Document(
+                        text=record.text,
+                        model=sparse_model_name,
+                    ),
+                },
                 payload={
                     "text": record.text,
                     "category": record.category,
@@ -397,7 +415,12 @@ def upsert_records(
                 },
             )
         )
-    client.upsert(collection_name=collection_name, points=points, wait=True)
+
+    client.upsert(
+        collection_name=collection_name,
+        points=points,
+        wait=True,
+    )
 
 
 def source_name_from_type(source_type: str) -> str:
@@ -414,7 +437,8 @@ def main() -> int:
     parser.add_argument("--source-type", choices=["payloadallthethings", "seclists", "auto"], default="payloadallthethings")
     parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
     parser.add_argument("--collection-name", default="waf_payloads")
-    parser.add_argument("--model-name", default="sentence-transformers/all-MiniLM-L6-v2")
+    parser.add_argument("--dense-model-name", default="BAAI/bge-small-en-v1.5")
+    parser.add_argument("--sparse-model-name", default="Qdrant/bm25")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--max-files", type=int, default=0, help="0 means no limit")
     parser.add_argument("--state-dir", default="./state/waf_payloads")
@@ -471,12 +495,14 @@ def main() -> int:
         for path in files:
             print(path.relative_to(repo_root).as_posix())
         return 0
-
-    model = SentenceTransformer(args.model_name)
-    vector_size = int(model.get_sentence_embedding_dimension())
-
+    
     client = QdrantClient(url=args.qdrant_url)
-    ensure_collection(client, args.collection_name, vector_size)
+
+    ensure_collection(
+        client=client,
+        collection_name=args.collection_name,
+        dense_model_name=args.dense_model_name,
+    )
 
     source_name = source_name_from_type(source_type)
     processed_files = 0
@@ -499,6 +525,7 @@ def main() -> int:
         snapshot_delta = None
         storage_size = None
         storage_delta = None
+        added_count = 0
         try:
             records = list(iter_payload_records(path, repo_root, source_name, args.extract_readme_codefences))
             if not records:
@@ -533,10 +560,14 @@ def main() -> int:
                 print(f"[EMPTY] {relative_path}")
                 continue
 
-            added_count = 0
             for batch in chunked(records, args.batch_size):
-                embeddings = embed_records(model, batch)
-                upsert_records(client, args.collection_name, batch, embeddings)
+                upsert_records_fastembed(
+                    client=client,
+                    collection_name=args.collection_name,
+                    records=batch,
+                    dense_model_name=args.dense_model_name,
+                    sparse_model_name=args.sparse_model_name,
+                )
                 added_count += len(batch)
 
             processed_files += 1
