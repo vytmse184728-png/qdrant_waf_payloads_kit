@@ -3,8 +3,8 @@ services:
     image: qdrant/qdrant:v1.16.3
     container_name: qdrant
     ports:
-      - "127.0.0.1:6335:6333"
-      - "127.0.0.1:6336:6334"
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
     environment:
       QDRANT__STORAGE__SNAPSHOTS_PATH: /qdrant/snapshots
       QDRANT__STORAGE__TEMP_PATH: /qdrant/tmp
