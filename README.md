@@ -50,7 +50,7 @@ pip install -r .\requirements.txt
 
 ```powershell
 docker compose up -d
-Invoke-RestMethod http://127.0.0.1:6335
+Invoke-RestMethod http://127.0.0.1:6333
 ```
 
 ## Dry run
@@ -74,14 +74,14 @@ python .\scripts\ingest_payloads_incremental.py `
   --repo-root "C:\path\to\PayloadsAllTheThings" `
   --source-type payloadallthethings `
   --collection-name waf_payloads `
-  --qdrant-url http://127.0.0.1:6335 `
+  --qdrant-url http://127.0.0.1:6333 `
   --max-files 5
 ```
 
 Check point count:
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:6335/collections/waf_payloads/points/count `
+Invoke-RestMethod -Method Post http://127.0.0.1:6333/collections/waf_payloads/points/count `
   -ContentType "application/json" `
   -Body '{"exact": true}'
 ```
@@ -89,8 +89,8 @@ Invoke-RestMethod -Method Post http://127.0.0.1:6335/collections/waf_payloads/po
 ## Create snapshot
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:6335/collections/waf_payloads/snapshots
-Invoke-RestMethod http://127.0.0.1:6335/collections/waf_payloads/snapshots | ConvertTo-Json -Depth 8
+Invoke-RestMethod -Method Post http://127.0.0.1:6333/collections/waf_payloads/snapshots
+Invoke-RestMethod http://127.0.0.1:6333/collections/waf_payloads/snapshots | ConvertTo-Json -Depth 8
 ```
 
 ## Export snapshot
